@@ -46,7 +46,8 @@ export async function GET(
       );
     }
 
-    const rssXml = generateRSSFeed(follows, userId);
+    const baseUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+    const rssXml = generateRSSFeed(follows, userId, baseUrl);
 
     if (isPreview) {
       return new NextResponse(

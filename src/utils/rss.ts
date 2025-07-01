@@ -2,7 +2,8 @@ import { ComickFollow } from "@/types/comick";
 
 export function generateRSSFeed(
   follows: ComickFollow[],
-  userId: string
+  userId: string,
+  baseUrl: string
 ): string {
   const sortedFollows = follows
     .filter(
@@ -63,9 +64,7 @@ export function generateRSSFeed(
     <title>Comick.io Follows - Latest Updates</title>
     <description>Latest chapter updates from your followed comics on Comick.io</description>
     <link>https://comick.io/user/${userId}/list</link>
-    <atom:link href="${
-      typeof window !== "undefined" ? window.location.origin : ""
-    }/api/rss/${userId}" rel="self" type="application/rss+xml"/>
+    <atom:link href="${baseUrl}/api/rss/${userId}" rel="self" type="application/rss+xml"/>
     <language>en-us</language>
     <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
     <generator>Comick RSS Generator</generator>
