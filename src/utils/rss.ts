@@ -1,17 +1,18 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { ComickFollow } from "@/types/comick";
 import crypto from "crypto";
 
 export function buildFeedSignature(follows: ComickFollow[]) {
   const items = normalizeAndSort(follows).slice(0, 50);
   const newest = items[0];
-  const latestDate = newest
+  const latestDate = newest?.md_comics?.uploaded_at
     ? new Date(newest.md_comics.uploaded_at)
     : new Date(0);
 
   const signaturePayload = items.map((f) => ({
-    id: f.md_comics.id,
-    last_chapter: f.md_comics.last_chapter,
-    uploaded_at: f.md_comics.uploaded_at,
+    id: f?.md_comics?.id ?? "unknown",
+    last_chapter: f?.md_comics?.last_chapter ?? "",
+    uploaded_at: f?.md_comics?.uploaded_at ?? "",
   }));
 
   const etag = `"W/${crypto
@@ -32,39 +33,51 @@ export function generateRSSFeed(
   const sortedFollows = normalizeAndSort(follows).slice(0, 50);
 
   const rssItems = sortedFollows.map((follow) => {
-    const comic = follow.md_comics;
-    const chapter = follow.md_chapters;
-    const coverImage =
-      comic.md_covers && comic.md_covers.length > 0
-        ? `https://meo.comick.pictures/${comic.md_covers[0].b2key}`
-        : "";
+    const comic = follow?.md_comics ?? ({} as any);
+    const chapter = (follow as any)?.md_chapters ?? null;
 
-    const title = chapter
-      ? `${comic.title} - Chapter ${chapter.chap}`
-      : comic.title;
+    const coverImage = comic?.md_covers?.length
+      ? `https://meo.comick.pictures/${comic.md_covers[0].b2key}`
+      : "";
 
-    const description = `
+    const titleText =
+      chapter && chapter.chap != null
+        ? `${comic?.title ?? "Untitled"} - Chapter ${chapter.chap}`
+        : `${comic?.title ?? "Untitled"}`;
+
+    const comicTitle = escapeXml(comic?.title ?? "Untitled");
+    const chapterNum = chapter?.chap != null ? escapeXml(chapter.chap) : "";
+    const lastChapter =
+      comic?.last_chapter != null ? escapeXml(comic.last_chapter) : "";
+
+    const descriptionHtml = `
       <div>
         ${
           coverImage
-            ? `<img src="${coverImage}" alt="${escapeXml(
-                comic.title
-              )}" style="max-width: 200px; height: auto; margin-bottom: 10px;" />`
+            ? `<img src="${escapeXml(
+                coverImage
+              )}" alt="${comicTitle}" style="max-width: 200px; height: auto; margin-bottom: 10px;" />`
             : ""
         }
-        <p><strong>${escapeXml(comic.title)}</strong></p>
-        ${chapter ? `<p>Chapter ${escapeXml(chapter.chap)}</p>` : ""}
-        <p>Status: ${getStatusText(comic.status)}</p>
-        <p>Last Chapter: ${comic.last_chapter}</p>
+        <p><strong>${comicTitle}</strong></p>
+        ${chapterNum ? `<p>Chapter ${chapterNum}</p>` : ""}
+        <p>Status: ${getStatusText(Number(comic?.status ?? 0))}</p>
+        <p>Last Chapter: ${lastChapter}</p>
       </div>
     `.trim();
 
+    const link = `https://comick.io/comic/${escapeXml(comic?.slug ?? "")}`;
+    const pubDate = new Date(comic?.uploaded_at ?? Date.now()).toUTCString();
+    const guid = `comick-${String(comic?.id ?? "unknown")}-${String(
+      comic?.last_chapter ?? "na"
+    )}`;
+
     return {
-      title,
-      link: `https://comick.io/comic/${comic.slug}`,
-      description,
-      pubDate: new Date(comic.uploaded_at).toUTCString(),
-      guid: `comick-${comic.id}-${comic.last_chapter}`,
+      title: titleText,
+      link,
+      description: descriptionHtml,
+      pubDate,
+      guid,
       enclosure: coverImage
         ? { url: coverImage, type: "image/jpeg" }
         : undefined,
@@ -78,8 +91,10 @@ export function generateRSSFeed(
   <channel>
     <title>Comick.io Follows - Latest Updates</title>
     <description>Latest chapter updates from your followed comics on Comick.io</description>
-    <link>https://comick.io/user/${userId}/list</link>
-    <atom:link href="${baseUrl}/api/rss/${userId}" rel="self" type="application/rss+xml"/>
+    <link>https://comick.io/user/${escapeXml(userId)}/list</link>
+    <atom:link href="${escapeXml(
+      `${baseUrl}/api/rss/${userId}`
+    )}" rel="self" type="application/rss+xml"/>
     <language>en-us</language>
     <ttl>5</ttl>
     <lastBuildDate>${lastBuild}</lastBuildDate>
@@ -93,14 +108,16 @@ ${rssItems
   .map(
     (item) => `
     <item>
-      <title><![CDATA[${item.title}]]></title>
-      <description><![CDATA[${item.description}]]></description>
-      <link>${item.link}</link>
-      <guid isPermaLink="false">${item.guid}</guid>
+      <title><![CDATA[${toCData(item.title)}]]></title>
+      <description><![CDATA[${toCData(item.description)}]]></description>
+      <link>${escapeXml(item.link)}</link>
+      <guid isPermaLink="false"><![CDATA[${toCData(item.guid)}]]></guid>
       <pubDate>${item.pubDate}</pubDate>
       ${
         item.enclosure
-          ? `<enclosure url="${item.enclosure.url}" type="${item.enclosure.type}"/>`
+          ? `<enclosure url="${escapeXml(
+              item.enclosure.url
+            )}" type="${escapeXml(item.enclosure.type)}"/>`
           : ""
       }
     </item>`
@@ -113,15 +130,13 @@ ${rssItems
 }
 
 function normalizeAndSort(follows: ComickFollow[]) {
-  return follows
-    .filter(
-      (follow) =>
-        follow.md_comics && follow.md_comics.uploaded_at && follow.type !== 4
-    )
+  return (follows ?? [])
+    .filter((f) => f?.md_comics)
+    .filter((f) => f?.type !== 4)
     .sort(
       (a, b) =>
-        new Date(b.md_comics.uploaded_at).getTime() -
-        new Date(a.md_comics.uploaded_at).getTime()
+        new Date(b?.md_comics?.uploaded_at ?? 0).getTime() -
+        new Date(a?.md_comics?.uploaded_at ?? 0).getTime()
     );
 }
 
@@ -140,11 +155,17 @@ function getStatusText(status: number): string {
   }
 }
 
-function escapeXml(s: string) {
+function escapeXml(input: unknown): string {
+  const s = input == null ? "" : String(input);
   return s
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&apos;");
+}
+
+function toCData(input: unknown): string {
+  const s = input == null ? "" : String(input);
+  return s.replaceAll("]]>", "]]]]><![CDATA[>");
 }
