@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ComickFollow } from "@/types/comick";
-import { generateRSSFeed } from "@/utils/rss";
+import { generateRSSFeed, buildFeedSignature } from "@/utils/rss";
 
 export async function GET(
   request: NextRequest,
@@ -11,7 +11,7 @@ export async function GET(
     const { searchParams } = new URL(request.url);
     const isPreview = searchParams.get("preview") === "true";
 
-    if (!userId || !userId.match(/^[a-f0-9-]+$/)) {
+    if (!userId || !/^[a-f0-9-]+$/i.test(userId)) {
       return NextResponse.json(
         { error: "Invalid user ID format" },
         { status: 400 }
@@ -21,9 +21,7 @@ export async function GET(
     const apiUrl = `https://api.comick.io/user/${userId}/follows`;
 
     const response = await fetch(apiUrl, {
-      headers: {
-        "User-Agent": "Comick RSS Generator/1.0",
-      },
+      headers: { "User-Agent": "Comick RSS Generator/1.1" },
       next: { revalidate: 300 },
     });
 
@@ -38,7 +36,6 @@ export async function GET(
     }
 
     const follows: ComickFollow[] = await response.json();
-
     if (!Array.isArray(follows) || follows.length === 0) {
       return NextResponse.json(
         { error: "No follows found for this user" },
@@ -46,8 +43,41 @@ export async function GET(
       );
     }
 
+    const { etag, lastModified } = buildFeedSignature(follows);
+
+    const reqETag = request.headers.get("if-none-match");
+    const reqIMS = request.headers.get("if-modified-since");
+
+    if (reqETag && reqETag === etag) {
+      return new NextResponse(null, {
+        status: 304,
+        headers: {
+          ETag: etag,
+          "Last-Modified": lastModified,
+          "Cache-Control":
+            "public, s-maxage=300, max-age=300, stale-while-revalidate=60, stale-if-error=3600",
+        },
+      });
+    }
+
+    if (reqIMS) {
+      const imsDate = new Date(reqIMS);
+      const lmDate = new Date(lastModified);
+      if (!isNaN(imsDate.getTime()) && lmDate <= imsDate) {
+        return new NextResponse(null, {
+          status: 304,
+          headers: {
+            ETag: etag,
+            "Last-Modified": lastModified,
+            "Cache-Control":
+              "public, s-maxage=300, max-age=300, stale-while-revalidate=60, stale-if-error=3600",
+          },
+        });
+      }
+    }
+
     const baseUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
-    const rssXml = generateRSSFeed(follows, userId, baseUrl);
+    const rssXml = generateRSSFeed(follows, userId, baseUrl, lastModified);
 
     if (isPreview) {
       return new NextResponse(
@@ -75,6 +105,10 @@ export async function GET(
           status: 200,
           headers: {
             "Content-Type": "text/html",
+            ETag: etag,
+            "Last-Modified": lastModified,
+            "Cache-Control":
+              "public, s-maxage=300, max-age=300, stale-while-revalidate=60, stale-if-error=3600",
           },
         }
       );
@@ -83,13 +117,16 @@ export async function GET(
     return new NextResponse(rssXml, {
       status: 200,
       headers: {
-        "Content-Type": "application/rss+xml",
-        "Cache-Control": "public, max-age=300",
+        "Content-Type": "application/rss+xml; charset=utf-8",
+        ETag: etag,
+        "Last-Modified": lastModified,
+        "Cache-Control":
+          "public, s-maxage=300, max-age=300, stale-while-revalidate=60, stale-if-error=3600",
+        Vary: "Accept-Encoding",
       },
     });
   } catch (error) {
     console.error("RSS generation error:", error);
-
     return NextResponse.json(
       {
         error: "Failed to generate RSS feed",
